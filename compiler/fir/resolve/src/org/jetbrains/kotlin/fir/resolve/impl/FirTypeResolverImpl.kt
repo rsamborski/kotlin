@@ -148,7 +148,7 @@ class FirTypeResolverImpl : FirTypeResolver {
             is FirImplicitBuiltinTypeRef -> {
                 resolveToSymbol(typeRef, scope, position)!!.toConeKotlinType(emptyList(), isNullable = false)!!
             }
-            is FirDynamicTypeRef, is FirImplicitTypeRef, is FirDelegatedTypeRef -> {
+            is FirDynamicTypeRef, is FirDelegatedTypeRef -> {
                 ConeKotlinErrorType("Not supported: ${typeRef::class.simpleName}")
             }
             else -> error("!")
