@@ -18,23 +18,18 @@ package org.jetbrains.kotlin.gradle.plugin
 
 import org.gradle.BuildAdapter
 import org.gradle.BuildResult
+import org.gradle.api.Project
 import org.gradle.api.invocation.Gradle
-import org.gradle.api.logging.Logger
 import org.gradle.api.logging.Logging
 import org.jetbrains.kotlin.compilerRunner.DELETED_SESSION_FILE_PREFIX
 import org.jetbrains.kotlin.compilerRunner.GradleCompilerRunner
-import org.jetbrains.kotlin.gradle.plugin.internal.state.TaskLoggers
 import org.jetbrains.kotlin.gradle.logging.kotlinDebug
 import org.jetbrains.kotlin.gradle.plugin.internal.state.TaskExecutionResults
-import org.jetbrains.kotlin.gradle.report.KotlinBuildReporter
+import org.jetbrains.kotlin.gradle.plugin.internal.state.TaskLoggers
 import org.jetbrains.kotlin.gradle.report.configureBuildReporter
-import org.jetbrains.kotlin.gradle.tasks.AbstractKotlinCompile
 import org.jetbrains.kotlin.gradle.utils.relativeToRoot
 import org.jetbrains.kotlin.utils.addToStdlib.sumByLong
-import java.io.File
 import java.lang.management.ManagementFactory
-import java.text.SimpleDateFormat
-import java.util.*
 
 internal class KotlinGradleBuildServices private constructor(
     private val gradle: Gradle
@@ -68,6 +63,8 @@ internal class KotlinGradleBuildServices private constructor(
             services.buildStarted()
             return services
         }
+
+        private const val KOTLIN_PLUGIN_LOADED_IN_PROJECTS_PROPERTY = "kotlin.plugin.loaded.in.projects"
     }
 
     private val log = Logging.getLogger(this.javaClass)
@@ -137,5 +134,53 @@ internal class KotlinGradleBuildServices private constructor(
 
     private fun getGcCount(): Long =
         ManagementFactory.getGarbageCollectorMXBeans().sumByLong { Math.max(0, it.collectionCount) }
+
+    private var loadedInProjectPath: String? = null
+
+    @Synchronized
+    internal fun detectKotlinPluginLoadedInMultipleProjects(project: Project) {
+        val projectPath = project.path
+
+        if (loadedInProjectPath == null) {
+            loadedInProjectPath = projectPath
+
+            if (System.getProperty(KOTLIN_PLUGIN_LOADED_IN_PROJECTS_PROPERTY) == null) {
+                System.setProperty(
+                    KOTLIN_PLUGIN_LOADED_IN_PROJECTS_PROPERTY,
+                    projectPath
+                )
+                gradle.taskGraph.whenReady { checkForKotlinPluginsLoadedInMultipleProjects(project) }
+            } else {
+                System.setProperty(
+                    KOTLIN_PLUGIN_LOADED_IN_PROJECTS_PROPERTY,
+                    System.getProperty(KOTLIN_PLUGIN_LOADED_IN_PROJECTS_PROPERTY) + ";" + loadedInProjectPath
+                )
+            }
+        }
+    }
+
+    private fun checkForKotlinPluginsLoadedInMultipleProjects(project: Project) {
+        val loadedInProjects = System.getProperty(KOTLIN_PLUGIN_LOADED_IN_PROJECTS_PROPERTY).split(";")
+        if (loadedInProjects.size > 1) {
+            project.logger.warn(MULTIPLE_KOTLIN_PLUGINS_LOADED_WARNING)
+            loadedInProjects.forEach { projectPath ->
+                project.logger.warn(MULTIPLE_KOTLIN_PLUGINS_SPECIFIC_PROJECT_WARNING + " '$projectPath'")
+            }
+        }
+    }
 }
 
+const val MULTIPLE_KOTLIN_PLUGINS_LOADED_WARNING: String =
+    "\nThe Kotlin Gradle plugin was loaded multiple times in different subprojects, which is not supported and may break the build. \n" +
+
+            "This might happen in subprojects that apply the Kotlin plugins with the Gradle 'plugins { ... }' DSL if they specify " +
+            "explicit versions, even if the versions are equal.\n" +
+
+            "Please add the Kotlin plugin to the common parent project or the root project, then remove the versions in the subprojects.\n" +
+
+            "If the parent project does not need the plugin, add 'apply false' to the plugin line.\n" +
+
+            "See: https://docs.gradle.org/current/userguide/plugins.html#sec:subprojects_plugins_dsl"
+
+const val MULTIPLE_KOTLIN_PLUGINS_SPECIFIC_PROJECT_WARNING: String =
+    " - the Kotlin plugin was loaded in project"
